@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Diario">
 <title>Diario Giornaliero</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.2.0/tabler-icons.min.css">
+
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
 
@@ -601,7 +601,8 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     <button class="tab-btn" onclick="showView('backup')">Backup</button>
   </div>
   <div class="nav-right">
-    <button class="btn-icon" onclick="printDay()" title="Stampa / Salva PDF" aria-label="Stampa"><i class="ti ti-printer"></i></button>
+    <span id="sync-indicator" style="font-size:11px;color:var(--muted);white-space:nowrap">☁️</span>
+    <button class="btn-icon" onclick="printDay()" title="Stampa / Salva PDF" aria-label="Stampa">🖨️</button>
     <button class="btn-primary" onclick="saveEntry()">Salva</button>
   </div>
 </nav>
@@ -724,10 +725,10 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
   <div class="history-filters">
     <input type="month" id="history-month" aria-label="Filtra per mese">
     <button class="btn-secondary" onclick="loadHistory()">
-      <i class="ti ti-search" aria-hidden="true"></i> Cerca
+      🔍 Cerca
     </button>
     <button class="btn-secondary" onclick="exportMonthPDF()">
-      <i class="ti ti-file-text" aria-hidden="true"></i> PDF mese
+      📄 PDF mese
     </button>
     <button class="btn-secondary" onclick="clearFilter()">Tutto</button>
   </div>
@@ -738,14 +739,22 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 <div id="view-backup" class="view">
 
   <div class="backup-section">
-    <h3>📤 Esporta dati</h3>
+    <h3>☁️ Sincronizzazione cloud</h3>
+    <p>I dati vengono sincronizzati automaticamente con Supabase quando sei online. Puoi anche forzare una sincronizzazione manuale.</p>
+    <div class="backup-actions">
+      <button class="btn-primary" onclick="manualSync()">🔄 Sincronizza ora</button>
+    </div>
+    <p class="next-backup" id="sync-status-detail"></p>
+  </div>
+
+  <div class="backup-section">
     <p>Salva tutte le voci come file JSON sul tuo dispositivo. Puoi usarlo come backup e reimportarlo in seguito.</p>
     <div class="backup-actions">
       <button class="btn-primary" onclick="exportAll()">
-        <i class="ti ti-download" aria-hidden="true"></i> Scarica JSON
+        ⬇️ Scarica JSON
       </button>
       <button class="btn-secondary" onclick="exportAllPDF()">
-        <i class="ti ti-file-text" aria-hidden="true"></i> Stampa / PDF
+        📄 Stampa / PDF
       </button>
     </div>
   </div>
@@ -756,7 +765,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     <div class="backup-actions">
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importBackup(this)">
       <button class="btn-secondary" onclick="document.getElementById('import-file').click()">
-        <i class="ti ti-upload" aria-hidden="true"></i> Carica file JSON
+        ⬆️ Carica file JSON
       </button>
     </div>
   </div>
@@ -766,7 +775,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     <p>L'app ricorda di fare il backup ogni 7 giorni. Puoi anche eseguirlo manualmente ora.</p>
     <div class="backup-actions">
       <button class="btn-secondary" onclick="doWeeklyBackup()">
-        <i class="ti ti-refresh" aria-hidden="true"></i> Esegui ora
+        🔄 Esegui ora
       </button>
     </div>
     <p class="next-backup" id="next-backup-info"></p>
@@ -788,14 +797,48 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-/* ─── DB ─── */
-const DB_NAME = 'DiarioGiornaliero', DB_VER = 1, STORE = 'entries';
+/* ─── SUPABASE CONFIG ─── */
+const SB_URL = 'https://hehcnepdaqwvlynrmpzz.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhlaGNuZXBkYXF3dmx5bnJtcHp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODMyMDcsImV4cCI6MjA5NDE1OTIwN30.Hyqg9ACBkH8WA5Mlr_-CXgy5rlitxuF-O7MGnAQl6Sk';
+const SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Prefer': 'resolution=merge-duplicates' };
+let isOnline = navigator.onLine;
+window.addEventListener('online',  () => { isOnline = true;  setSyncStatus(); syncPending(); });
+window.addEventListener('offline', () => { isOnline = false; setSyncStatus(); });
+
+function setSyncStatus() {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  el.textContent = isOnline ? '☁️ Online' : '📴 Offline';
+  el.style.color = isOnline ? 'var(--sage)' : 'var(--muted)';
+}
+
+/* ─── SUPABASE API ─── */
+async function sbUpsert(entry) {
+  const res = await fetch(`${SB_URL}/rest/v1/entries`, {
+    method: 'POST',
+    headers: SB_HEADERS,
+    body: JSON.stringify({ date: entry.date, data: entry, updated_at: new Date().toISOString() })
+  });
+  return res.ok;
+}
+async function sbGetAll() {
+  const res = await fetch(`${SB_URL}/rest/v1/entries?select=date,data,updated_at&order=date.desc`, { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY } });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+/* ─── LOCAL DB (IndexedDB) ─── */
+const DB_NAME = 'DiarioGiornaliero', DB_VER = 2, STORE = 'entries', PENDING_STORE = 'pending';
 let db;
 
 function openDB() {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB_NAME, DB_VER);
-    r.onupgradeneeded = e => e.target.result.createObjectStore(STORE, { keyPath: 'date' });
+    r.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'date' });
+      if (!d.objectStoreNames.contains(PENDING_STORE)) d.createObjectStore(PENDING_STORE, { keyPath: 'date' });
+    };
     r.onsuccess = e => { db = e.target.result; res(); };
     r.onerror = e => rej(e);
   });
@@ -824,6 +867,68 @@ function dbGetAll() {
     req.onerror = e => rej(e);
   });
 }
+function dbPutPending(obj) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(PENDING_STORE, 'readwrite');
+    tx.objectStore(PENDING_STORE).put(obj).onsuccess = () => res();
+  });
+}
+function dbGetAllPending() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(PENDING_STORE, 'readonly');
+    tx.objectStore(PENDING_STORE).getAll().onsuccess = e => res(e.target.result);
+  });
+}
+function dbClearPending(date) {
+  return new Promise((res) => {
+    const tx = db.transaction(PENDING_STORE, 'readwrite');
+    tx.objectStore(PENDING_STORE).delete(date).onsuccess = () => res();
+  });
+}
+
+/* ─── HYBRID SAVE ─── */
+async function hybridPut(entry) {
+  await dbPut(entry);
+  if (isOnline) {
+    const ok = await sbUpsert(entry).catch(() => false);
+    if (!ok) await dbPutPending(entry);
+  } else {
+    await dbPutPending(entry);
+  }
+}
+
+/* ─── SYNC PENDING ─── */
+async function syncPending() {
+  if (!isOnline) return;
+  const pending = await dbGetAllPending();
+  if (!pending.length) return;
+  let synced = 0;
+  for (const entry of pending) {
+    const ok = await sbUpsert(entry).catch(() => false);
+    if (ok) { await dbClearPending(entry.date); synced++; }
+  }
+  if (synced) toast(`☁️ Sincronizzate ${synced} voci!`);
+}
+
+/* ─── PULL FROM CLOUD ─── */
+async function pullFromCloud() {
+  if (!isOnline) return;
+  try {
+    const rows = await sbGetAll();
+    if (!rows || !rows.length) return;
+    let count = 0;
+    for (const row of rows) {
+      const local = await dbGet(row.date);
+      const remoteEntry = row.data;
+      remoteEntry.date = row.date;
+      if (!local || new Date(row.updated_at) > new Date(local.savedAt || 0)) {
+        await dbPut(remoteEntry);
+        count++;
+      }
+    }
+    if (count) { toast(`☁️ Scaricate ${count} voci dal cloud`); }
+  } catch (e) { console.warn('Pull failed', e); }
+}
 
 /* ─── UTILS ─── */
 function dateKey(d) { return d.toISOString().split('T')[0]; }
@@ -843,7 +948,7 @@ function toast(msg, dur = 2600) {
 
 /* ─── STATE ─── */
 let currentDate = new Date();
-let selectedMood = '', selectedClima = '';
+let selectedMoods = [], selectedClimas = [];
 let waterCount = 0, fruitCount = 0;
 const DROPS = 8, FRUITS = 7;
 const FRUIT_ICONS = ['🍎','🍊','🥝','🥦','🥕','🍇','🥑'];
@@ -893,14 +998,24 @@ function buildFruits() {
 
 /* ─── MOOD / CLIMA ─── */
 function setMood(btn) {
-  document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('sel'));
-  btn.classList.add('sel');
-  selectedMood = btn.dataset.mood;
+  const m = btn.dataset.mood;
+  if (selectedMoods.includes(m)) {
+    selectedMoods = selectedMoods.filter(x => x !== m);
+    btn.classList.remove('sel');
+  } else {
+    selectedMoods.push(m);
+    btn.classList.add('sel');
+  }
 }
 function setClima(btn) {
-  document.querySelectorAll('.clima-btn').forEach(b => b.classList.remove('sel'));
-  btn.classList.add('sel');
-  selectedClima = btn.dataset.clima;
+  const c = btn.dataset.clima;
+  if (selectedClimas.includes(c)) {
+    selectedClimas = selectedClimas.filter(x => x !== c);
+    btn.classList.remove('sel');
+  } else {
+    selectedClimas.push(c);
+    btn.classList.add('sel');
+  }
 }
 
 /* ─── EXERCISE ─── */
@@ -918,7 +1033,7 @@ function renderExercise() {
     div.innerHTML = `
       <input type="text" placeholder="Tipo di attività" value="${escHtml(r.tipo || '')}" oninput="exerciseRows[${i}].tipo=this.value" aria-label="Tipo attività">
       <input type="text" placeholder="Durata" value="${escHtml(r.durata || '')}" oninput="exerciseRows[${i}].durata=this.value" aria-label="Durata">
-      <button class="del-btn" onclick="removeExercise(${i})" aria-label="Rimuovi"><i class="ti ti-x"></i></button>
+      <button class="del-btn" onclick="removeExercise(${i})" aria-label="Rimuovi">✕</button>
     `;
     c.appendChild(div);
   });
@@ -994,7 +1109,7 @@ function clearForm() {
   ['f-wakeup','f-sleep','f-pensieri','f-colazione','f-pranzo','f-merenda','f-cena'].forEach(id => document.getElementById(id).value = '');
   document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('sel'));
   document.querySelectorAll('.clima-btn').forEach(b => b.classList.remove('sel'));
-  selectedMood = ''; selectedClima = '';
+  selectedMoods = []; selectedClimas = [];
   waterCount = 0; fruitCount = 0;
   buildDrops(); buildFruits();
   buildExercise(); buildGratitude();
@@ -1010,12 +1125,12 @@ function populateForm(e) {
   document.getElementById('f-pranzo').value = e.pranzo || '';
   document.getElementById('f-merenda').value = e.merenda || '';
   document.getElementById('f-cena').value = e.cena || '';
-  selectedMood = e.mood || '';
-  selectedClima = e.clima || '';
+  selectedMoods = Array.isArray(e.mood) ? e.mood : (e.mood ? [e.mood] : []);
+  selectedClimas = Array.isArray(e.clima) ? e.clima : (e.clima ? [e.clima] : []);
   waterCount = e.water || 0;
   fruitCount = e.fruit || 0;
-  document.querySelectorAll('.mood-btn').forEach(b => b.classList.toggle('sel', b.dataset.mood === selectedMood));
-  document.querySelectorAll('.clima-btn').forEach(b => b.classList.toggle('sel', b.dataset.clima === selectedClima));
+  document.querySelectorAll('.mood-btn').forEach(b => b.classList.toggle('sel', selectedMoods.includes(b.dataset.mood)));
+  document.querySelectorAll('.clima-btn').forEach(b => b.classList.toggle('sel', selectedClimas.includes(b.dataset.clima)));
   buildDrops(); buildFruits();
   buildExercise(e.exercise || []);
   buildGratitude(e.gratitude || []);
@@ -1031,8 +1146,8 @@ async function saveEntry() {
     date: dateKey(currentDate),
     wakeup: document.getElementById('f-wakeup').value,
     sleep: document.getElementById('f-sleep').value,
-    mood: selectedMood,
-    clima: selectedClima,
+    mood: selectedMoods,
+    clima: selectedClimas,
     water: waterCount,
     fruit: fruitCount,
     exercise: exerciseRows.filter(r => r.tipo || r.durata),
@@ -1044,11 +1159,11 @@ async function saveEntry() {
     pensieri: document.getElementById('f-pensieri').value,
     savedAt: new Date().toISOString()
   };
-  await dbPut(entry);
+  await hybridPut(entry);
   const st = document.getElementById('save-status');
   st.textContent = '✓ Salvato alle ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
   st.className = 'save-status saved';
-  toast('Giornata salvata! 🌿');
+  toast(isOnline ? 'Salvata e sincronizzata! ☁️' : 'Salvata in locale 📴');
   await buildWeekRow();
 }
 
@@ -1077,7 +1192,7 @@ async function loadHistory() {
     return `<div class="entry-card" onclick="goToDate('${e.date}')" role="button" aria-label="${fmtDate(d)}">
       <div class="entry-card-header">
         <span class="entry-date">${fmtDate(d)}</span>
-        <div class="entry-meta"><span>${e.mood || ''}</span><span>${e.clima || ''}</span></div>
+        <div class="entry-meta"><span>${Array.isArray(e.mood) ? e.mood.join('') : (e.mood || '')}</span><span>${Array.isArray(e.clima) ? e.clima.join('') : (e.clima || '')}</span></div>
       </div>
       <div class="entry-stats">
         <span>💧 ${((e.water || 0) * 0.5).toFixed(1)} L</span>
@@ -1106,7 +1221,7 @@ async function loadStats() {
   const avgW = ((all.reduce((s, e) => s + (e.water || 0), 0) / n) * 0.5).toFixed(1);
   const avgS = (all.reduce((s, e) => s + (parseFloat(e.sleep) || 0), 0) / n).toFixed(1);
   const avgF = (all.reduce((s, e) => s + (e.fruit || 0), 0) / n).toFixed(1);
-  const moods = all.map(e => e.mood).filter(Boolean);
+  const moods = all.flatMap(e => Array.isArray(e.mood) ? e.mood : (e.mood ? [e.mood] : [])).filter(Boolean);
   const topMood = moods.length ? Object.entries(moods.reduce((acc, m) => { acc[m] = (acc[m] || 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1])[0][0] : '—';
   document.getElementById('stats-container').innerHTML = `
     <div class="stat-row"><span class="stat-label">📅 Voci totali</span><span class="stat-val">${n}</span></div>
@@ -1146,7 +1261,7 @@ async function importBackup(input) {
       const raw = JSON.parse(e.target.result);
       const entries = raw.entries || (Array.isArray(raw) ? raw : []);
       let count = 0;
-      for (const entry of entries) { if (entry.date) { await dbPut(entry); count++; } }
+      for (const entry of entries) { if (entry.date) { await hybridPut(entry); count++; } }
       toast(`Importate ${count} voci! ✅`);
       loadDay();
     } catch { toast('Errore nel file JSON ❌'); }
@@ -1178,6 +1293,17 @@ function updateBackupInfo() {
   }
 }
 
+async function manualSync() {
+  if (!isOnline) { toast('📴 Sei offline — riprova quando sei connessa'); return; }
+  toast('⏳ Sincronizzazione in corso...');
+  await pullFromCloud();
+  await syncPending();
+  const el = document.getElementById('sync-status-detail');
+  if (el) el.innerHTML = `Ultima sincronizzazione: <strong>${new Date().toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'})}</strong>`;
+  toast('☁️ Sincronizzazione completata!');
+  await loadDay();
+}
+
 /* ─── PRINT / PDF ─── */
 function printDay() { window.print(); }
 function exportMonthPDF() { window.print(); }
@@ -1195,7 +1321,10 @@ async function init() {
   buildFruits();
   buildExercise();
   buildGratitude();
+  setSyncStatus();
+  await pullFromCloud();
   await loadDay();
+  await syncPending();
 }
 
 init().catch(err => {
