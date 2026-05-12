@@ -1434,15 +1434,13 @@ async function doLogin() {
   const pwd = document.getElementById('login-pwd').value.trim();
   const errEl = document.getElementById('login-error');
   if (!pwd) { errEl.textContent = 'Inserisci la password'; return; }
-  const btn = document.querySelector('.login-btn');
-  btn.textContent = 'Verifica...'; btn.disabled = true;
-  if (isOnline) {
-    const ok = await sbCheckPassword(pwd).catch(() => false);
-    if (!ok) {
-      errEl.textContent = 'Password errata ❌';
-      btn.textContent = 'Accedi'; btn.disabled = false;
-      return;
-    }
+  const btn = document.getElementById('login-btn');
+  btn.textContent = 'Accesso...'; btn.disabled = true;
+  const CORRECT = 'gH6DHqHfNrIsweuP';
+  if (pwd !== CORRECT) {
+    errEl.textContent = 'Password errata ❌';
+    btn.textContent = 'Accedi'; btn.disabled = false;
+    return;
   }
   appPassword = pwd;
   localStorage.setItem('diario_pwd_hash', btoa(pwd));
@@ -1475,21 +1473,15 @@ async function init() {
   document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   const savedHash = localStorage.getItem('diario_pwd_hash');
   if (savedHash) {
-    const pwd = atob(savedHash);
-    if (isOnline) {
-      const ok = await sbCheckPassword(pwd).catch(() => false);
-      if (ok) {
+    try {
+      const pwd = atob(savedHash);
+      if (pwd === 'gH6DHqHfNrIsweuP') {
         appPassword = pwd;
         document.getElementById('login-overlay').style.display = 'none';
         await startApp();
         return;
       }
-    } else {
-      appPassword = pwd;
-      document.getElementById('login-overlay').style.display = 'none';
-      await startApp();
-      return;
-    }
+    } catch(e) { localStorage.removeItem('diario_pwd_hash'); }
   }
   document.getElementById('login-pwd').focus();
 }
