@@ -973,6 +973,7 @@ async function confirmDeleteDay() {
   await buildWeekRow();
   toast('Voce eliminata 🗑');
 }
+function dbClearPending(date) {
   return new Promise((res) => {
     const tx = db.transaction(PENDING_STORE, 'readwrite');
     tx.objectStore(PENDING_STORE).delete(date).onsuccess = () => res();
