@@ -834,6 +834,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
 <!-- SAVE BAR (only in form view) -->
 <div class="save-bar" id="save-bar">
+  <button class="btn-secondary" onclick="confirmDeleteDay()" style="color:#B84444;border-color:#e8c4c4">🗑 Elimina</button>
   <span class="save-status" id="save-status">Pronto</span>
   <button class="btn-primary" onclick="saveEntry()">💾 Salva giornata</button>
 </div>
@@ -946,7 +947,32 @@ function dbGetAllPending() {
     tx.objectStore(PENDING_STORE).getAll().onsuccess = e => res(e.target.result);
   });
 }
-function dbClearPending(date) {
+function dbDelete(key) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(key).onsuccess = () => res();
+  });
+}
+async function sbDelete(date) {
+  const res = await fetch(`${SB_URL}/rest/v1/entries?date=eq.${date}`, {
+    method: 'DELETE',
+    headers: getSbHeaders()
+  });
+  return res.ok;
+}
+async function confirmDeleteDay() {
+  const key = dateKey(currentDate);
+  const entry = await dbGet(key);
+  if (!entry) { toast('Nessuna voce da eliminare per questo giorno'); return; }
+  const dateStr = fmtDate(currentDate);
+  if (!confirm(`Eliminare la voce del ${dateStr}?\nQuesta azione non può essere annullata.`)) return;
+  await dbDelete(key);
+  await dbClearPending(key);
+  if (isOnline && appPassword) await sbDelete(key).catch(() => {});
+  clearForm();
+  await buildWeekRow();
+  toast('Voce eliminata 🗑');
+}
   return new Promise((res) => {
     const tx = db.transaction(PENDING_STORE, 'readwrite');
     tx.objectStore(PENDING_STORE).delete(date).onsuccess = () => res();
@@ -1256,18 +1282,22 @@ async function loadHistory() {
   c.innerHTML = entries.map(e => {
     const d = new Date(e.date + 'T12:00:00');
     const preview = e.pensieri ? `<div class="entry-preview">"${escHtml(e.pensieri.slice(0, 90))}${e.pensieri.length > 90 ? '…' : ''}"</div>` : '';
-    return `<div class="entry-card" onclick="goToDate('${e.date}')" role="button" aria-label="${fmtDate(d)}">
-      <div class="entry-card-header">
+    return `<div class="entry-card" role="button" aria-label="${fmtDate(d)}">
+      <div class="entry-card-header" onclick="goToDate('${e.date}')">
         <span class="entry-date">${fmtDate(d)}</span>
         <div class="entry-meta"><span>${Array.isArray(e.mood) ? e.mood.join('') : (e.mood || '')}</span><span>${Array.isArray(e.clima) ? e.clima.join('') : (e.clima || '')}</span></div>
       </div>
-      <div class="entry-stats">
+      <div class="entry-stats" onclick="goToDate('${e.date}')">
         <span>💧 ${((e.water || 0) * 0.5).toFixed(1)} L</span>
         <span>🥦 ${e.fruit || 0} porz.</span>
         <span>💤 ${e.sleep || 0} h</span>
         ${(e.exercise || []).filter(r => r.tipo).length ? `<span>🏃 ${(e.exercise || []).filter(r => r.tipo).length} att.</span>` : ''}
       </div>
-      ${preview}
+      ${preview ? `<div onclick="goToDate('${e.date}')">${preview}</div>` : ''}
+      <div style="display:flex;justify-content:flex-end;margin-top:8px;gap:8px">
+        <button onclick="goToDate('${e.date}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--muted);cursor:pointer">✏️ Apri</button>
+        <button onclick="deleteEntryFromHistory('${e.date}',event)" style="background:none;border:1px solid #e8c4c4;border-radius:6px;padding:4px 10px;font-size:12px;color:#B84444;cursor:pointer">🗑 Elimina</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1275,6 +1305,17 @@ function clearFilter() {
   document.getElementById('history-month').value = '';
   loadHistory();
 }
+async function deleteEntryFromHistory(date, event) {
+  event.stopPropagation();
+  const d = new Date(date + 'T12:00:00');
+  if (!confirm(`Eliminare la voce del ${fmtDate(d)}?\nQuesta azione non può essere annullata.`)) return;
+  await dbDelete(date);
+  await dbClearPending(date);
+  if (isOnline && appPassword) await sbDelete(date).catch(() => {});
+  toast('Voce eliminata 🗑');
+  loadHistory();
+}
+
 function goToDate(d) { currentDate = new Date(d + 'T12:00:00'); showView('form'); loadDay(); }
 
 /* ─── STATS ─── */
