@@ -593,6 +593,49 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 </head>
 <body>
 
+<style>
+.login-overlay {
+  position: fixed; inset: 0; background: var(--cream);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999;
+}
+.login-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 20px; padding: 36px 32px; max-width: 340px; width: 90%;
+  text-align: center;
+}
+.login-box h1 { font-size: 28px; margin-bottom: 6px; }
+.login-box p { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+.login-input {
+  width: 100%; border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; font-size: 16px; font-family: 'DM Sans', sans-serif;
+  background: var(--bg); color: var(--text); outline: none;
+  text-align: center; letter-spacing: .1em; margin-bottom: 12px;
+  transition: border-color .15s; -webkit-appearance: none;
+}
+.login-input:focus { border-color: var(--sage); }
+.login-btn {
+  width: 100%; background: var(--sage); border: none; border-radius: 10px;
+  padding: 12px; font-size: 15px; font-family: 'DM Sans', sans-serif;
+  font-weight: 500; color: #fff; cursor: pointer; transition: background .15s;
+}
+.login-btn:hover, .login-btn:active { background: #3a5432; }
+.login-error { font-size: 13px; color: #B84444; margin-top: 10px; min-height: 18px; }
+.login-offline { font-size: 12px; color: var(--muted); margin-top: 14px; cursor: pointer; text-decoration: underline; }
+</style>
+
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <div style="font-size:48px;margin-bottom:12px">🌿</div>
+    <h1>Diario</h1>
+    <p>Inserisci la password per accedere</p>
+    <input class="login-input" type="password" id="login-pwd" placeholder="••••••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="login-btn" onclick="doLogin()">Accedi</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-offline" onclick="offlineMode()">Continua offline senza sync ☁️</div>
+  </div>
+</div>
+
 <nav>
   <span class="nav-title">🌿 Diario</span>
   <div class="nav-tabs">
@@ -743,6 +786,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     <p>I dati vengono sincronizzati automaticamente con Supabase quando sei online. Puoi anche forzare una sincronizzazione manuale.</p>
     <div class="backup-actions">
       <button class="btn-primary" onclick="manualSync()">🔄 Sincronizza ora</button>
+      <button class="btn-secondary" onclick="doLogout()">🔒 Logout</button>
     </div>
     <p class="next-backup" id="sync-status-detail"></p>
   </div>
@@ -800,7 +844,24 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 /* ─── SUPABASE CONFIG ─── */
 const SB_URL = 'https://hehcnepdaqwvlynrmpzz.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhlaGNuZXBkYXF3dmx5bnJtcHp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODMyMDcsImV4cCI6MjA5NDE1OTIwN30.Hyqg9ACBkH8WA5Mlr_-CXgy5rlitxuF-O7MGnAQl6Sk';
-const SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Prefer': 'resolution=merge-duplicates' };
+
+let appPassword = '';
+function getSbHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + SB_KEY,
+    'Prefer': 'resolution=merge-duplicates',
+    'x-app-password': appPassword
+  };
+}
+function getSbReadHeaders() {
+  return {
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + SB_KEY,
+    'x-app-password': appPassword
+  };
+}
 let isOnline = navigator.onLine;
 window.addEventListener('online',  () => { isOnline = true;  setSyncStatus(); syncPending(); });
 window.addEventListener('offline', () => { isOnline = false; setSyncStatus(); });
@@ -816,15 +877,21 @@ function setSyncStatus() {
 async function sbUpsert(entry) {
   const res = await fetch(`${SB_URL}/rest/v1/entries`, {
     method: 'POST',
-    headers: SB_HEADERS,
+    headers: getSbHeaders(),
     body: JSON.stringify({ date: entry.date, data: entry, updated_at: new Date().toISOString() })
   });
   return res.ok;
 }
 async function sbGetAll() {
-  const res = await fetch(`${SB_URL}/rest/v1/entries?select=date,data,updated_at&order=date.desc`, { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY } });
+  const res = await fetch(`${SB_URL}/rest/v1/entries?select=date,data,updated_at&order=date.desc`, { headers: getSbReadHeaders() });
   if (!res.ok) return null;
   return await res.json();
+}
+async function sbCheckPassword(pwd) {
+  const res = await fetch(`${SB_URL}/rest/v1/entries?select=date&limit=1`, {
+    headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'x-app-password': pwd }
+  });
+  return res.ok;
 }
 
 /* ─── LOCAL DB (IndexedDB) ─── */
@@ -1293,6 +1360,15 @@ function updateBackupInfo() {
   }
 }
 
+function doLogout() {
+  localStorage.removeItem('diario_pwd_hash');
+  appPassword = '';
+  document.getElementById('login-pwd').value = '';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('login-overlay').style.display = 'flex';
+  showView('form');
+}
+
 async function manualSync() {
   if (!isOnline) { toast('📴 Sei offline — riprova quando sei connessa'); return; }
   toast('⏳ Sincronizzazione in corso...');
@@ -1312,19 +1388,66 @@ function exportAllPDF() { window.print(); }
 /* ─── HELPERS ─── */
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+/* ─── LOGIN ─── */
+async function doLogin() {
+  const pwd = document.getElementById('login-pwd').value.trim();
+  const errEl = document.getElementById('login-error');
+  if (!pwd) { errEl.textContent = 'Inserisci la password'; return; }
+  const btn = document.querySelector('.login-btn');
+  btn.textContent = 'Verifica...'; btn.disabled = true;
+  if (isOnline) {
+    const ok = await sbCheckPassword(pwd).catch(() => false);
+    if (!ok) {
+      errEl.textContent = 'Password errata ❌';
+      btn.textContent = 'Accedi'; btn.disabled = false;
+      return;
+    }
+  }
+  appPassword = pwd;
+  localStorage.setItem('diario_pwd_hash', btoa(pwd));
+  document.getElementById('login-overlay').style.display = 'none';
+  await startApp();
+}
+
+function offlineMode() {
+  appPassword = '';
+  document.getElementById('login-overlay').style.display = 'none';
+  startApp();
+}
+
+async function startApp() {
+  const now = new Date();
+  document.getElementById('history-month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  buildDrops(); buildFruits(); buildExercise(); buildGratitude();
+  setSyncStatus();
+  if (isOnline && appPassword) await pullFromCloud();
+  await loadDay();
+  if (isOnline && appPassword) await syncPending();
+}
+
 /* ─── INIT ─── */
 async function init() {
   await openDB();
-  const now = new Date();
-  document.getElementById('history-month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  buildDrops();
-  buildFruits();
-  buildExercise();
-  buildGratitude();
   setSyncStatus();
-  await pullFromCloud();
-  await loadDay();
-  await syncPending();
+  const savedHash = localStorage.getItem('diario_pwd_hash');
+  if (savedHash) {
+    const pwd = atob(savedHash);
+    if (isOnline) {
+      const ok = await sbCheckPassword(pwd).catch(() => false);
+      if (ok) {
+        appPassword = pwd;
+        document.getElementById('login-overlay').style.display = 'none';
+        await startApp();
+        return;
+      }
+    } else {
+      appPassword = pwd;
+      document.getElementById('login-overlay').style.display = 'none';
+      await startApp();
+      return;
+    }
+  }
+  document.getElementById('login-pwd').focus();
 }
 
 init().catch(err => {
