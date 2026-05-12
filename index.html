@@ -629,10 +629,10 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     <div style="font-size:48px;margin-bottom:12px">🌿</div>
     <h1>Diario</h1>
     <p>Inserisci la password per accedere</p>
-    <input class="login-input" type="password" id="login-pwd" placeholder="••••••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
-    <button class="login-btn" onclick="doLogin()">Accedi</button>
+    <input class="login-input" type="password" id="login-pwd" placeholder="••••••••••••" autocomplete="current-password">
+    <button class="login-btn" id="login-btn">Accedi</button>
     <div class="login-error" id="login-error"></div>
-    <div class="login-offline" onclick="offlineMode()">Continua offline senza sync ☁️</div>
+    <div class="login-offline" id="login-offline">Continua offline senza sync ☁️</div>
   </div>
 </div>
 
@@ -1470,6 +1470,9 @@ async function startApp() {
 async function init() {
   await openDB();
   setSyncStatus();
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.getElementById('login-offline').addEventListener('click', offlineMode);
+  document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   const savedHash = localStorage.getItem('diario_pwd_hash');
   if (savedHash) {
     const pwd = atob(savedHash);
